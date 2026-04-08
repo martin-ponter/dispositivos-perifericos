@@ -247,6 +247,44 @@ export default function AssetRegistrationForm({
         title="Registro del activo"
         description="Completa la informacion del dispositivo o periferico."
       >
+        {showWindowsHelp ? (
+          <div className="mt-5 rounded-3xl border border-sky-200 bg-sky-50/70 p-5">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white text-lg text-sky-700 shadow-sm">
+                i
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">
+                    ¿Cómo sacar los datos de tu equipo en Windows?
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Esta ayuda te sirve para completar los campos del portátil o sobremesa sin salirte del flujo.
+                  </p>
+                </div>
+
+                <div className="space-y-2 text-sm text-slate-700">
+                  <p>
+                    Para ver el <span className="font-semibold">modelo del equipo</span>, pulsa <span className="rounded bg-white px-2 py-0.5 font-mono text-xs text-slate-900">Win + R</span>, escribe <span className="rounded bg-white px-2 py-0.5 font-mono text-xs text-slate-900">msinfo32</span> y pulsa Enter.
+                  </p>
+                  <p>
+                    En <span className="font-semibold">Información del sistema</span> podrás ver el modelo del equipo, la memoria RAM instalada y la versión de Windows o sistema operativo.
+                  </p>
+                  <p>
+                    Para ver el <span className="font-semibold">número de serie</span>, abre <span className="font-semibold">Símbolo del sistema (CMD)</span> y ejecuta <span className="rounded bg-white px-2 py-0.5 font-mono text-xs text-slate-900">wmic bios get serialnumber</span>.
+                  </p>
+                  <p>
+                    Para revisar conectores o más detalles de hardware, abre <span className="font-semibold">Administrador de dispositivos</span> o consulta las especificaciones del fabricante si tienes dudas.
+                  </p>
+                </div>
+
+                <p className="text-sm font-medium text-slate-600">
+                  Si algún dato no te aparece o no estás seguro, rellena lo que conozcas y consulta con IT.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <SelectField
             label="Tipo de activo"
@@ -352,45 +390,6 @@ export default function AssetRegistrationForm({
             </>
           ) : null}
         </div>
-
-        {showWindowsHelp ? (
-          <div className="mt-5 rounded-3xl border border-sky-200 bg-sky-50/70 p-5">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white text-lg text-sky-700 shadow-sm">
-                i
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900">
-                    ¿Cómo sacar los datos de tu equipo en Windows?
-                  </h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Esta ayuda te sirve para completar los campos del portátil o sobremesa sin salirte del flujo.
-                  </p>
-                </div>
-
-                <div className="space-y-2 text-sm text-slate-700">
-                  <p>
-                    Para ver el <span className="font-semibold">modelo del equipo</span>, pulsa <span className="rounded bg-white px-2 py-0.5 font-mono text-xs text-slate-900">Win + R</span>, escribe <span className="rounded bg-white px-2 py-0.5 font-mono text-xs text-slate-900">msinfo32</span> y pulsa Enter.
-                  </p>
-                  <p>
-                    En <span className="font-semibold">Información del sistema</span> podrás ver el modelo del equipo, la memoria RAM instalada y la versión de Windows o sistema operativo.
-                  </p>
-                  <p>
-                    Para ver el <span className="font-semibold">número de serie</span>, abre <span className="font-semibold">Símbolo del sistema</span> y ejecuta <span className="rounded bg-white px-2 py-0.5 font-mono text-xs text-slate-900">wmic bios get serialnumber</span>.
-                  </p>
-                  <p>
-                    Para revisar conectores o más detalles de hardware, abre <span className="font-semibold">Administrador de dispositivos</span> o consulta las especificaciones del fabricante si tienes dudas.
-                  </p>
-                </div>
-
-                <p className="text-sm font-medium text-slate-600">
-                  Si algún dato no te aparece o no estás seguro, rellena lo que conozcas y consulta con IT.
-                </p>
-              </div>
-            </div>
-          </div>
-        ) : null}
 
         {isAdmin && (
           <div className="mt-4">
