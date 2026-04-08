@@ -285,7 +285,7 @@ export default function AssetRegistrationForm({
             </div>
           </div>
         ) : null}
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 mt-4">
           <SelectField
             label="Tipo de activo"
             value={form.assetType}
