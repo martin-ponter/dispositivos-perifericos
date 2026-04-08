@@ -1,5 +1,7 @@
 import type { APIRoute } from "astro";
 
+export const prerender = false;
+
 function toQueryString(data: Record<string, string>) {
   const params = new URLSearchParams();
 
@@ -37,7 +39,7 @@ async function extractParams(request: Request) {
           }
         }
       } catch {
-        // ignorar si el body no es JSON válido
+        // ignorar
       }
     } else {
       try {
@@ -47,7 +49,7 @@ async function extractParams(request: Request) {
           result[key] = value;
         }
       } catch {
-        // ignorar si no se puede parsear
+        // ignorar
       }
     }
   }
@@ -58,9 +60,13 @@ async function extractParams(request: Request) {
 async function handleRequest(request: Request) {
   const params = await extractParams(request);
   const query = toQueryString(params);
-  const location = query ? `/?${query}` : "/";
 
-  return Response.redirect(location, 303);
+  return new Response(null, {
+    status: 303,
+    headers: {
+      Location: query ? `/?${query}` : "/",
+    },
+  });
 }
 
 export const GET: APIRoute = async ({ request }) => handleRequest(request);
