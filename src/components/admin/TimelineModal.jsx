@@ -1,13 +1,74 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { BITRIX_APP_CONFIG } from "../../config/bitrixConfig";
+import {
+  buildHistoryMovementFields,
+  getBitrixItemCollection,
+  normalizeHistoryItem,
+  sortHistoryItemsDesc,
+} from "../../lib/bitrix/history";
+import { createHistoryItem, listHistoryItems, updateSpaItem } from "../../lib/bitrix/spa";
 import { getAllBitrixUsers } from "../../lib/bitrix/users";
 
-export default function TimelineModal({ asset, onClose }) {
+function formatMovementDate(item) {
+  if (!item?.dateValue && !item?.timeValue) {
+    return "Sin fecha";
+  }
+
+  const baseValue = item.timeValue || item.dateValue;
+  const parsed = new Date(baseValue);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return item.timeValue || item.dateValue;
+  }
+
+  return parsed.toLocaleString("es-ES", {
+    dateStyle: "short",
+    timeStyle: item.timeValue ? "short" : undefined,
+  });
+}
+
+function hasUsefulValue(value) {
+  return Boolean(value && value !== "-");
+}
+
+function getAssetDisplayTitle(asset) {
+  const hasBrand = hasUsefulValue(asset?.brand);
+  const hasModel = hasUsefulValue(asset?.model);
+  const hasType = hasUsefulValue(asset?.type);
+  const hasSerialNumber = hasUsefulValue(asset?.serialNumber);
+  const hasInternalId = hasUsefulValue(asset?.idInterno);
+
+  if (hasBrand && hasModel) {
+    return `${asset.brand} ${asset.model}`;
+  }
+
+  if (hasBrand) {
+    return asset.brand;
+  }
+
+  if (hasType && hasSerialNumber) {
+    return `${asset.type} · ${asset.serialNumber}`;
+  }
+
+  if (hasType && hasInternalId) {
+    return `${asset.type} · ${asset.idInterno}`;
+  }
+
+  return "Activo sin nombre";
+}
+
+export default function TimelineModal({ asset, user, onClose, onSaved }) {
   const [users, setUsers] = useState([]);
+  const [historyItems, setHistoryItems] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [usersError, setUsersError] = useState("");
+  const [historyError, setHistoryError] = useState("");
   const [searchUser, setSearchUser] = useState("");
   const [selectedUser, setSelectedUser] = useState(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   const containerRef = useRef(null);
 
@@ -16,16 +77,16 @@ export default function TimelineModal({ asset, onClose }) {
 
     let cancelled = false;
 
-    async function loadUsers() {
+    async function loadModalData() {
+      setLoadingUsers(true);
+      setLoadingHistory(true);
+      setUsersError("");
+      setHistoryError("");
+
+      let nextUsers = [];
+
       try {
-        setLoadingUsers(true);
-        setUsersError("");
-
-        const companyUsers = await getAllBitrixUsers();
-
-        if (cancelled) return;
-
-        setUsers(companyUsers);
+        nextUsers = (await getAllBitrixUsers()) || [];
       } catch (error) {
         console.error("Error cargando usuarios:", error);
         if (!cancelled) {
@@ -38,12 +99,47 @@ export default function TimelineModal({ asset, onClose }) {
         }
       } finally {
         if (!cancelled) {
+          setUsers(nextUsers);
           setLoadingUsers(false);
+        }
+      }
+
+      try {
+        const historyResponse = await listHistoryItems({
+          [BITRIX_APP_CONFIG.HISTORY.FIELDS.ID_INTERNO_ACTIVO]: asset.idInterno,
+        });
+
+        if (cancelled) return;
+
+        const userMap = new Map(
+          nextUsers.map((currentUser) => [currentUser.id, currentUser])
+        );
+
+        setHistoryItems(
+          sortHistoryItemsDesc(
+            getBitrixItemCollection(historyResponse).map((item) =>
+              normalizeHistoryItem(item, userMap)
+            )
+          )
+        );
+      } catch (error) {
+        console.error("Error cargando historial real:", error);
+        if (!cancelled) {
+          setHistoryError(
+            error?.description ||
+              error?.error_description ||
+              error?.message ||
+              "No se ha podido cargar el historial de movimientos."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingHistory(false);
         }
       }
     }
 
-    loadUsers();
+    loadModalData();
 
     return () => {
       cancelled = true;
@@ -53,14 +149,10 @@ export default function TimelineModal({ asset, onClose }) {
   useEffect(() => {
     if (!asset) return;
 
-    if (asset.linkedTo && asset.linkedTo !== "-") {
-      setSearchUser("");
-    } else {
-      setSearchUser("");
-    }
-
+    setSearchUser("");
     setSelectedUser(null);
     setDropdownOpen(false);
+    setSaveError("");
   }, [asset]);
 
   useEffect(() => {
@@ -77,35 +169,67 @@ export default function TimelineModal({ asset, onClose }) {
     };
   }, []);
 
- const filteredUsers = useMemo(() => {
-  const normalizedSearch = searchUser.trim().toLowerCase();
+  const filteredUsers = useMemo(() => {
+    const normalizedSearch = searchUser.trim().toLowerCase();
 
-  if (!normalizedSearch) {
-    return users;
-  }
+    if (!normalizedSearch) {
+      return users;
+    }
 
-  return users.filter((user) =>
-    [user.name, user.email, String(user.id)]
-      .join(" ")
-      .toLowerCase()
-      .includes(normalizedSearch)
-  );
-}, [users, searchUser]);
+    return users.filter((currentUser) =>
+      [currentUser.name, currentUser.email, String(currentUser.id)]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedSearch)
+    );
+  }, [users, searchUser]);
 
   if (!asset) return null;
 
-  function handleSelectUser(user) {
-    setSelectedUser(user);
-    setSearchUser(user.name);
+  function handleSelectUser(nextUser) {
+    setSelectedUser(nextUser);
+    setSearchUser(nextUser.name);
     setDropdownOpen(false);
   }
 
-  function handleAssign() {
+  async function handleAssign() {
     if (!selectedUser) return;
 
-    alert(
-      `Aquí luego conectaremos la asignación real del activo ${asset.id} al usuario ${selectedUser.name} (${selectedUser.id}).`
-    );
+    try {
+      setSaving(true);
+      setSaveError("");
+
+      await updateSpaItem(asset.itemId, {
+        [BITRIX_APP_CONFIG.FIELDS.VINCULADO_A]: selectedUser.id,
+      });
+
+      try {
+        await createHistoryItem(
+          buildHistoryMovementFields(asset, {
+            movementTypeId:
+              BITRIX_APP_CONFIG.HISTORY.ENUMS.TIPO_MOVIMIENTO.Reasignacion,
+            previousUserId: asset.linkedToId,
+            newUserId: selectedUser.id,
+            performedById: user?.id,
+            detail: "Reasignado manualmente desde panel admin",
+          })
+        );
+      } catch (historyError) {
+        console.error("Error creando historial de reasignacion:", historyError);
+      }
+
+      await onSaved?.();
+    } catch (error) {
+      console.error("Error reasignando activo:", error);
+      setSaveError(
+        error?.description ||
+          error?.error_description ||
+          error?.message ||
+          "No se ha podido reasignar el dispositivo."
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -121,9 +245,9 @@ export default function TimelineModal({ asset, onClose }) {
           <div>
             <p className="text-sm text-slate-500">Vinculaciones y timeline</p>
             <h2 className="mt-1 text-2xl font-bold text-slate-900">
-              {asset.brand} {asset.model}
+              {getAssetDisplayTitle(asset)}
             </h2>
-            <p className="mt-1 text-sm text-slate-600">ID: {asset.id}</p>
+            <p className="mt-1 text-sm text-slate-600">ID: {asset.idInterno}</p>
           </div>
 
           <button
@@ -138,7 +262,7 @@ export default function TimelineModal({ asset, onClose }) {
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
           <section className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
             <h3 className="text-lg font-semibold text-slate-900">
-              Vinculación actual
+              Vinculacion actual
             </h3>
 
             <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
@@ -184,18 +308,18 @@ export default function TimelineModal({ asset, onClose }) {
                         No se han encontrado usuarios.
                       </div>
                     ) : (
-                      filteredUsers.map((user) => (
+                      filteredUsers.map((currentUser) => (
                         <button
-                          key={user.id}
+                          key={currentUser.id}
                           type="button"
-                          onClick={() => handleSelectUser(user)}
+                          onClick={() => handleSelectUser(currentUser)}
                           className="flex w-full flex-col items-start gap-1 border-b border-slate-100 px-4 py-3 text-left last:border-b-0 hover:bg-slate-50"
                         >
                           <span className="text-sm font-semibold text-slate-900">
-                            {user.name}
+                            {currentUser.name}
                           </span>
                           <span className="text-xs text-slate-500">
-                            {user.email || "Sin email"} · ID {user.id}
+                            {currentUser.email || "Sin email"} · ID {currentUser.id}
                           </span>
                         </button>
                       ))
@@ -221,11 +345,17 @@ export default function TimelineModal({ asset, onClose }) {
               <button
                 type="button"
                 onClick={handleAssign}
-                disabled={!selectedUser}
+                disabled={!selectedUser || saving}
                 className="mt-4 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Reasignar dispositivo
+                {saving ? "Reasignando..." : "Reasignar dispositivo"}
               </button>
+
+              {saveError ? (
+                <p className="mt-3 text-sm font-medium text-rose-600">
+                  {saveError}
+                </p>
+              ) : null}
             </div>
           </section>
 
@@ -233,20 +363,58 @@ export default function TimelineModal({ asset, onClose }) {
             <h3 className="text-lg font-semibold text-slate-900">Timeline</h3>
 
             <div className="mt-4 space-y-3">
-              {asset.timeline.map((item, index) => (
-                <div
-                  key={`${item.date}-${item.action}-${index}`}
-                  className="rounded-2xl border border-slate-200 bg-white p-4"
-                >
-                  <p className="text-xs uppercase tracking-wide text-slate-500">
-                    {item.date}
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {item.action}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-600">{item.user}</p>
+              {loadingHistory ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
+                  Cargando historial...
                 </div>
-              ))}
+              ) : historyError ? (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                  {historyError}
+                </div>
+              ) : historyItems.length ? (
+                historyItems.map((item) => (
+                  <article
+                    key={item.id}
+                    className="rounded-2xl border border-slate-200 bg-white p-4"
+                  >
+                    <p className="text-xs uppercase tracking-wide text-slate-500">
+                      {formatMovementDate(item)}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                      {item.movementTypeLabel}
+                    </p>
+                    {item.detail ? (
+                      <p className="mt-2 text-sm text-slate-600">{item.detail}</p>
+                    ) : null}
+                    {item.previousUser || item.newUser ? (
+                        <p className="mt-2 text-sm text-slate-600">
+                          Usuario: {item.previousUser || "-"} {"→"} {item.newUser || "-"}
+                        </p>
+                      ) : null}
+
+                      {item.previousState || item.newState ? (
+                        <p className="mt-1 text-sm text-slate-600">
+                          Estado: {item.previousState || "-"} {"→"} {item.newState || "-"}
+                        </p>
+                      ) : null}
+
+                      {item.previousLocation || item.newLocation ? (
+                        <p className="mt-1 text-sm text-slate-600">
+                          Ubicacion: {item.previousLocation || "-"} {"→"} {item.newLocation || "-"}
+                        </p>
+                      ) : null}
+                    {item.performedBy ? (
+                      <p className="mt-1 text-sm text-slate-500">
+                        Realizado por: {item.performedBy}
+                      </p>
+                    ) : null}
+                  </article>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
+                  Este activo todavia no tiene movimientos registrados.
+                </div>
+              )}
             </div>
           </section>
         </div>
@@ -254,3 +422,4 @@ export default function TimelineModal({ asset, onClose }) {
     </div>
   );
 }
+

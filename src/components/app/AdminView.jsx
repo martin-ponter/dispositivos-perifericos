@@ -5,6 +5,11 @@ import RegisterDeviceView from "../admin/RegisterDeviceView";
 
 export default function AdminView({ user, installInfo }) {
   const [activeTab, setActiveTab] = useState("inventory");
+  const [inventoryRefreshToken, setInventoryRefreshToken] = useState(0);
+
+  function handleInventoryChanged() {
+    setInventoryRefreshToken((currentValue) => currentValue + 1);
+  }
 
   return (
     <section className="space-y-6">
@@ -34,9 +39,15 @@ export default function AdminView({ user, installInfo }) {
       <AdminTabs activeTab={activeTab} onChange={setActiveTab} />
 
       {activeTab === "inventory" ? (
-        <InventoryView user={user} />
+        <InventoryView
+          user={user}
+          refreshToken={inventoryRefreshToken}
+        />
       ) : (
-        <RegisterDeviceView user={user} />
+        <RegisterDeviceView
+          user={user}
+          onAssetCreated={handleInventoryChanged}
+        />
       )}
     </section>
   );

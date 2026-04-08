@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { BITRIX_APP_CONFIG } from "../../config/bitrixConfig";
-import { createSpaItem } from "../../lib/bitrix/spa";
+import { buildHistoryMovementFields } from "../../lib/bitrix/history";
+import { createHistoryItem, createSpaItem } from "../../lib/bitrix/spa";
 import SectionCard from "./SectionCard";
 import { InputField, SelectField, TextareaField } from "./Field";
 
@@ -16,13 +17,29 @@ function buildInternalId() {
   return `ACT-${stamp}-${random}`;
 }
 
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = () =>
+      reject(reader.error || new Error("No se pudo leer el archivo"));
+
+    reader.readAsDataURL(file);
+  });
+}
+
 function getAssetTypeLabel(value) {
   const map = {
-    "4814": "Portátil",
+    "4814": "Portatil",
     "4815": "Sobremesa",
     "4816": "Monitor",
     "4817": "Teclado",
-    "4818": "Ratón",
+    "4818": "Raton",
     "4819": "Cascos",
     "4820": "Cable",
     "4821": "Adaptador",
@@ -32,12 +49,18 @@ function getAssetTypeLabel(value) {
   return map[String(value)] || "Sin tipo";
 }
 
+function isFullAssetType(assetType) {
+  return [
+    BITRIX_APP_CONFIG.ENUMS.TIPO_ACTIVO.Portatil,
+    BITRIX_APP_CONFIG.ENUMS.TIPO_ACTIVO.Sobremesa,
+  ].includes(String(assetType));
+}
+
 function initialState(user) {
   return {
     employeeName: user?.name || "",
     employeeEmail: user?.email || "",
     employeeBitrixId: String(user?.id || ""),
-
     assetType: "",
     state: BITRIX_APP_CONFIG.DEFAULTS.ESTADO,
     registrationDate: getTodayDate(),
@@ -54,12 +77,17 @@ function initialState(user) {
   };
 }
 
-export default function AssetRegistrationForm({ user, isAdmin = false }) {
+export default function AssetRegistrationForm({
+  user,
+  isAdmin = false,
+  onSuccess,
+}) {
   const [form, setForm] = useState(initialState(user));
   const [errors, setErrors] = useState({});
   const [sending, setSending] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const showFullFields = isFullAssetType(form.assetType);
 
   const summary = useMemo(() => {
     return [
@@ -89,19 +117,21 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
     }
 
     if (!String(form.physicalLocation).trim()) {
-      nextErrors.physicalLocation = "Indica la ubicación.";
+      nextErrors.physicalLocation = "Indica la ubicacion.";
     }
 
     if (!String(form.serialNumber).trim()) {
-      nextErrors.serialNumber = "Indica el número de serie.";
+      nextErrors.serialNumber = "Indica el numero de serie.";
     }
 
-    if (!String(form.brand).trim()) {
-      nextErrors.brand = "Indica la marca.";
-    }
+    if (showFullFields) {
+      if (!String(form.brand).trim()) {
+        nextErrors.brand = "Indica la marca.";
+      }
 
-    if (!String(form.model).trim()) {
-      nextErrors.model = "Indica el modelo.";
+      if (!String(form.model).trim()) {
+        nextErrors.model = "Indica el modelo.";
+      }
     }
 
     setErrors(nextErrors);
@@ -119,6 +149,9 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
       setSending(true);
 
       const internalId = buildInternalId();
+      const invoiceFileValue = form.invoiceFile
+        ? [form.invoiceFile.name, await fileToBase64(form.invoiceFile)]
+        : undefined;
 
       const observationsParts = [
         `Registrado por: ${form.employeeName}`,
@@ -148,11 +181,48 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
         [BITRIX_APP_CONFIG.FIELDS.TIPO_CONECTOR]: form.connectorType,
       };
 
-      await createSpaItem(fields);
+      if (invoiceFileValue) {
+        fields[BITRIX_APP_CONFIG.FIELDS.FACTURA_ARCHIVO] = invoiceFileValue;
+      }
+
+      const created = await createSpaItem(fields);
+      const createdId = created?.item?.id || created?.id || created;
+
+      if (createdId) {
+        try {
+          await createHistoryItem(
+            buildHistoryMovementFields(
+              {
+                itemId: createdId,
+                idInterno: internalId,
+                serialNumber: form.serialNumber,
+                brand: form.brand,
+                model: form.model,
+                typeId: form.assetType,
+                linkedToId: user?.id,
+                stateId: form.state,
+                location: form.physicalLocation,
+              },
+              {
+                movementTypeId:
+                  BITRIX_APP_CONFIG.HISTORY.ENUMS.TIPO_MOVIMIENTO.Alta,
+                newUserId: user?.id,
+                performedById: user?.id,
+                newStateId: form.state,
+                newLocation: form.physicalLocation,
+                detail: "Alta inicial del activo",
+              }
+            )
+          );
+        } catch (historyError) {
+          console.error("Error creando historial de alta:", historyError);
+        }
+      }
 
       setSuccessMessage("Activo registrado correctamente en Bitrix.");
       setForm(initialState(user));
       setErrors({});
+      await onSuccess?.(created);
     } catch (error) {
       console.error(error);
       setErrorMessage(
@@ -168,10 +238,9 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-
       <SectionCard
         title="Registro del activo"
-        description="Completa la información del dispositivo o periférico."
+        description="Completa la informacion del dispositivo o periferico."
       >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <SelectField
@@ -181,11 +250,11 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
             error={errors.assetType}
             options={[
               { value: "", label: "Selecciona un tipo" },
-              { value: "4814", label: "Portátil" },
+              { value: "4814", label: "Portatil" },
               { value: "4815", label: "Sobremesa" },
               { value: "4816", label: "Monitor" },
               { value: "4817", label: "Teclado" },
-              { value: "4818", label: "Ratón" },
+              { value: "4818", label: "Raton" },
               { value: "4819", label: "Cascos" },
               { value: "4820", label: "Cable" },
               { value: "4821", label: "Adaptador" },
@@ -202,7 +271,7 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
               { value: "4823", label: "Disponible" },
               { value: "4824", label: "Ocupado" },
               { value: "4825", label: "Desechado" },
-              { value: "4826", label: "En reparación" },
+              { value: "4826", label: "En reparacion" },
             ]}
           />
 
@@ -215,7 +284,7 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
           />
 
           <InputField
-            label="Ubicación física"
+            label="Ubicacion fisica"
             value={form.physicalLocation}
             onChange={(value) => updateField("physicalLocation", value)}
             error={errors.physicalLocation}
@@ -223,27 +292,11 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
           />
 
           <InputField
-            label="Número de serie"
+            label="Numero de serie"
             value={form.serialNumber}
             onChange={(value) => updateField("serialNumber", value)}
             error={errors.serialNumber}
             placeholder="Ej. SN-001245"
-          />
-
-          <InputField
-            label="Marca"
-            value={form.brand}
-            onChange={(value) => updateField("brand", value)}
-            error={errors.brand}
-            placeholder="Ej. Lenovo"
-          />
-
-          <InputField
-            label="Modelo"
-            value={form.model}
-            onChange={(value) => updateField("model", value)}
-            error={errors.model}
-            placeholder="Ej. ThinkPad E14"
           />
 
           <InputField
@@ -254,25 +307,45 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
           />
 
           <InputField
-            label="Sistema operativo"
-            value={form.operatingSystem}
-            onChange={(value) => updateField("operatingSystem", value)}
-            placeholder="Ej. Windows 11 Pro"
-          />
-
-          <InputField
-            label="Memoria RAM"
-            value={form.ram}
-            onChange={(value) => updateField("ram", value)}
-            placeholder="Ej. 16 GB"
-          />
-
-          <InputField
             label="Tipo de conector"
             value={form.connectorType}
             onChange={(value) => updateField("connectorType", value)}
             placeholder="Ej. USB-C, HDMI, DisplayPort"
           />
+
+          {showFullFields ? (
+            <>
+              <InputField
+                label="Marca"
+                value={form.brand}
+                onChange={(value) => updateField("brand", value)}
+                error={errors.brand}
+                placeholder="Ej. Lenovo"
+              />
+
+              <InputField
+                label="Modelo"
+                value={form.model}
+                onChange={(value) => updateField("model", value)}
+                error={errors.model}
+                placeholder="Ej. ThinkPad E14"
+              />
+
+              <InputField
+                label="Sistema operativo"
+                value={form.operatingSystem}
+                onChange={(value) => updateField("operatingSystem", value)}
+                placeholder="Ej. Windows 11 Pro"
+              />
+
+              <InputField
+                label="Memoria RAM"
+                value={form.ram}
+                onChange={(value) => updateField("ram", value)}
+                placeholder="Ej. 16 GB"
+              />
+            </>
+          ) : null}
         </div>
 
         {isAdmin && (
@@ -300,7 +373,7 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
             label="Observaciones"
             value={form.observations}
             onChange={(value) => updateField("observations", value)}
-            placeholder="Información adicional del activo"
+            placeholder="Informacion adicional del activo"
           />
         </div>
       </SectionCard>
@@ -309,7 +382,7 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
         <div className="grid gap-4 md:grid-cols-2">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs uppercase tracking-wide text-slate-500">
-              Vista rápida
+              Vista rapida
             </p>
             <p className="mt-2 text-sm font-semibold text-slate-900">
               {summary}
@@ -352,3 +425,4 @@ export default function AssetRegistrationForm({ user, isAdmin = false }) {
     </form>
   );
 }
+

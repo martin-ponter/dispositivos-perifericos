@@ -1,6 +1,6 @@
 import AssetRegistrationForm from "../assets/AssetRegistrationForm";
 
-export default function RegisterDeviceView({ user }) {
+export default function RegisterDeviceView({ user, onAssetCreated }) {
   return (
     <section className="space-y-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -13,7 +13,7 @@ export default function RegisterDeviceView({ user }) {
         </p>
       </div>
 
-      <AssetRegistrationForm user={user} isAdmin />
+      <AssetRegistrationForm user={user} isAdmin onSuccess={onAssetCreated} />
     </section>
   );
 }
